@@ -1,30 +1,61 @@
 import { v4 as uuidv4 } from 'uuid';
+import { EventEmitter } from 'node:events';
+import { PassThrough, Transform } from 'stream';
 
-const clients = new Set();
+const emitter = new EventEmitter();
 
-export const getOne = async (ctx) => {
-  const message = await new Promise((resolve) => {
-    clients.add(resolve);
-
-    ctx.res.on('close', () => {
-      clients.delete(resolve);
-      resolve();
+class SSEStream extends Transform {
+  constructor() {
+    super({
+      writableObjectMode: true,
     });
-  });
-  ctx.body = message;
+  }
+
+  _transform(data, _encoding, done) {
+    this.push(`data: ${JSON.stringify(data)}\n\n`);
+    done();
+  }
+}
+
+export const getOne = async (ctx, next) => {
+  try {
+    /* ctx.request.socket.setTimeout(0);
+    ctx.req.socket.setNoDelay(true);
+    ctx.req.socket.setKeepAlive(true); */
+
+    ctx.set({
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    });
+
+    const stream = new SSEStream();
+    ctx.status = 200;
+    ctx.body = stream;
+
+    const listener = (message) => {
+      stream.write(message);
+    };
+
+    emitter.on('message', listener);
+    console.log('subs');
+
+    stream.on('close', () => {
+      emitter.off('message', listener);
+    });
+  } catch (error) {
+    console.log(error);
+  }
+  next();
 };
 
 export const add = (ctx) => {
   const body = ctx.request.body;
 
-  clients.forEach((resolve) => {
-    resolve({
-      ...body,
-      id: uuidv4(),
-    });
+  emitter.emit('message', {
+    ...body,
+    id: uuidv4(),
   });
-
-  clients.clear();
 
   ctx.body = 'ok';
 };
